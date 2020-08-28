@@ -1,0 +1,177 @@
+###
+##
+## Processing pipeline for paired-end RNA-seq data
+##
+##
+## Hard-coded in this script and in the accompanying scripts:
+##     0_fastq_raw    : directory containing raw fastq files
+##     1_fastq_trimmed: directory to contain adapter trimmed fastq files
+##     2_aligned      : directory to contain BAM files after alignment and sorting
+##     3_assembled_1.3    : directory for the final result
+##     qc             : directory to contain all fastqc reports for the multiqc report
+##
+##
+## @author Yassen Assenov, Reka Toth
+## Advice: NEVER use tabs, only spaces!!
+
+
+import sys
+
+def message(mes):
+  sys.stderr.write("|--- " + mes + "\n")
+
+
+import glob
+import re
+
+BASE_DIR= config["BASE_DIR"]
+WDIR= BASE_DIR + "/files"
+workdir: WDIR
+QC_FOLDER= WDIR + "/qc"
+
+#MATES = ["R1", "R2"]
+
+
+#todo: don't hardcode two adapters
+ADAPTER_1=config["ADAPTER_1"]
+ADAPTER_2=config["ADAPTER_2"]
+PRIMER_1=config["PRIMER_1"]
+PRIMER_2=config["PRIMER_2"]
+POLYA="AAAAAAAAAA"
+
+GTF=config["GTF"]
+
+REFERENCE=config["REFERENCE"]
+
+#KALLISTO_INDEX=config["KALLISTO_INDEX"]
+
+FASTQC_LOCATION= "/opt/miniconda/bin"
+MULTIQC_LOCATION= "/opt/miniconda/bin"
+CUTADAPT_LOCATION= "/opt/miniconda/bin"
+
+HISAT2_LOCATION="/opt/miniconda/bin"
+SAMTOOLS_LOCATION="/opt/miniconda/bin"
+STRINGTIE_LOCATION="/opt/miniconda/bin"
+QUALI="/opt/miniconda/bin"
+PREPDE="/ngs_share/tools/scripts"
+KALLISTO_LOCATION="/opt/miniconda/bin"
+
+TEMP=config["TEMP"]
+
+
+message("The current working directory is " + WDIR)
+
+SAMPLES, = glob_wildcards("0_fastq_raw/{smp}_R2.fastq.gz")
+NB_SAMPLES = len(SAMPLES)
+
+for sample in SAMPLES:
+  message("Sample " + str(sample) + " will be processed")
+
+
+rule all:
+  input:   expand("1_fastq_trimmed/{sample}_R1_trimmed.fastq.gz", sample=SAMPLES),
+           expand("1_fastq_trimmed/{sample}_R2_trimmed.fastq.gz", sample=SAMPLES),
+           expand("3_assembled_1.3/{sample}/{sample}_only_called.gtf", sample=SAMPLES),
+           expand("4_quantified/{sample}/abundance.tsv", sample=SAMPLES),
+           expand("qc/{sample}/qualimapReport.html", sample=SAMPLES),
+           expand("qc/{sample}/qualimapReport.html", sample=SAMPLES),
+           "3_assembled_1.3/gene_count_matrix.csv",
+           "3_assembled_1.3/transcript_count_matrix.csv"
+
+rule trimming:
+  input:  fwd="0_fastq_raw/{sample}_R1.fastq.gz",
+          rev="0_fastq_raw/{sample}_R2.fastq.gz"
+  output: fwd="1_fastq_trimmed/{sample}_R1_trimmed.fastq.gz",
+          rev="1_fastq_trimmed/{sample}_R2_trimmed.fastq.gz"
+  log:    "qc/{sample}_cutadapt.log"
+  params:  ad1=ADAPTER_1, ad2=ADAPTER_2, pr_1=PRIMER_1, pr_2=PRIMER_2, polya=POLYA, fastqc_loc=FASTQC_LOCATION, qc_loc=QC_FOLDER, cutadapt=CUTADAPT_LOCATION
+  message: """--- --- Quality check of raw data with Fastqc and trimming reads."""
+  shell: """
+        #{params.fastqc_loc}/fastqc --outdir  {params.qc_loc}/ --extract  -f fastq {input.fwd} {input.rev}
+	#trim_galore --fastqc 
+    {params.cutadapt}/cutadapt -b {params.ad1} -B {params.ad1} -b {params.ad2} -B {params.ad2} -b {params.polya} -B {params.polya} \
+-b {params.pr_1} -B {params.pr_1} -b {params.pr_2} -B {params.pr_2} -u 15 -U 15 -m 5 -q 25 -o {output.fwd} -p {output.rev}  {input.fwd} {input.rev} &> {log}
+	#{params.cutadapt}/cutadapt -m 5  -o {output.fwd} -p {output.rev}  {input.fwd} {input.rev} &> {log}
+       {params.fastqc_loc}/fastqc --outdir  {params.qc_loc}/ --extract  -f fastq {output.fwd} {output.rev}
+ """
+  
+
+rule hisat:
+        input:fwd="1_fastq_trimmed/{sample}_R1_trimmed.fastq.gz",
+              rev="1_fastq_trimmed/{sample}_R2_trimmed.fastq.gz"
+        params: index=REFERENCE, hisat=HISAT2_LOCATION, metrics="qc/hisat_metrics_{sample}.log"
+        output: sam="2_aligned/{sample}.sam"
+        log: "qc/hisat_{sample}.log"
+        message: """--- Alignment with HISAT2."""
+        threads: 8 
+        shell: """
+               {params.hisat}/hisat2 -x {params.index} \
+                -1 {input.fwd} -2 {input.rev} --rna-strandness RF --met-file {params.metrics}\
+                --max-intronlen 20000 --no-unal --dta -S {output.sam} &> {log}
+     """
+
+
+rule sort_index:
+        input:  sam="2_aligned/{sample}.sam"
+        params: temp=TEMP, samtools_loc=SAMTOOLS_LOCATION
+        output: bam_sorted="2_aligned/{sample}_sorted.bam"
+        message: """--- Bam sorting and indexing"""
+        shell: """
+                {params.samtools_loc}/samtools sort {input.sam} -T {params.temp} -o {output.bam_sorted}
+                {params.samtools_loc}/samtools index {output.bam_sorted}
+     """
+ 
+ 
+rule qc:
+        input: bam="2_aligned/{sample}_sorted.bam"
+        output: report="qc/{sample}/qualimapReport.html",
+                folder="qc/{sample}"
+        params: qc_loc=QC_FOLDER, gtf=GTF, quali=QUALI
+        message: """--- Running qualimap"""
+        shell: """
+                {params.quali}/qualimap --java-mem-size=4G rnaseq -a proportional -bam {input.bam} \
+                -gtf {params.gtf} -pe -p strand-specific-forward \
+                -s -outdir {output.folder}
+               
+     """
+    
+
+rule only_stringtie_eB:
+        input:  bam="2_aligned/{sample}_sorted.bam"
+               #sam="2_aligned/{sample}.sam"
+        params: qc_loc=QC_FOLDER, stringtie=STRINGTIE_LOCATION, gtf=GTF, input_folder="3_assembled_1.3/", prepde=PREPDE, multiqc=MULTIQC_LOCATION, gene_count="3_assembled_1.3/gene_count_matrix.csv", transcript="3_assembled_1.3/transcript_count_matrix.csv"
+        output: gtf="3_assembled_1.3/{sample}/{sample}_only_called.gtf",
+                gene_ab="3_assembled_1.3/{sample}/{sample}_gene_abundancies.txt",
+                covs="3_assembled_1.3/{sample}/{sample}_coverage.txt"
+        message: """--- Calling transcripts only using the original gtfs"""
+        threads: 8 
+        shell: """
+             
+              {params.stringtie}/stringtie {input.bam}  \
+               -p 8 -eB -G {params.gtf} \
+               -o {output.gtf} \
+               -A {output.gene_ab} \
+               -C {output.covs}
+               {params.multiqc}/multiqc -f {params.qc_loc}
+                #python2 {params.prepde}/prepDE.py --input={params.input_folder} \
+                #-g {params.gene_count} -t {params.transcript} \
+                #-l 90
+    """
+
+rule fpkm_to_counts:
+      input: gtf= expand("3_assembled_1.3/{sample}/{sample}_only_called.gtf", sample=SAMPLES),
+             gene_ab=expand("3_assembled_1.3/{sample}/{sample}_gene_abundancies.txt", sample=SAMPLES),
+             covs=expand("3_assembled_1.3/{sample}/{sample}_coverage.txt", sample=SAMPLES)
+      output: gene_count="3_assembled_1.3/gene_count_matrix.csv",
+              transcript="3_assembled_1.3/transcript_count_matrix.csv"
+      message: """--- Calling transcripts only using the original gtfs"""
+      params: input_folder="3_assembled_1.3/", prepde=PREPDE
+      shell: """
+             python {params.prepde}/prepDE.py --input={params.input_folder} \
+             -g {output.gene_count} -t {output.transcript} \
+             -l 100 
+    """       
+
+
+
+

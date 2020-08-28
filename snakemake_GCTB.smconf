@@ -1,0 +1,23 @@
+BASE_DIR: "/c010-datasets/Internal/GCTB/RNA-Seq/analysis/snakemake/"
+
+ADAPTER_1: "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC"
+ADAPTER_2: "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT"
+PRIMER_1: "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCT"
+PRIMER_2: "CGGTGGTCGCCGTATCATT"
+POLYA: "AAAAAAAAAA"
+
+TEMP: "/ngs_share/tmp"
+
+GTF: "/ngs_share/data/genomes/Hsapiens/GRCh37/rnaseq/ref-transcripts.gtf"
+
+REFERENCE: "/home/tothr/c010-projects/Reka/23-CAGE-Seq/reference/grch37_snp_tran/genome_snp_tran"
+
+#FASTQC_LOCATION : "/opt/miniconda/bin"
+#MULTIQC_LOCATION : "/opt/miniconda/bin"
+#CUTADAPT_LOCATION:"/opt/miniconda/bin"
+#HISAT2_LOCATION:"/opt/miniconda/bin"
+#SAMTOOLS_LOCATION:"/opt/miniconda/bin"
+#STRINGTIE_LOCATION:"/opt/miniconda/bin"
+#QUALI:"/opt/miniconda/bin"
+#PREPDE:"/ngs_share/tools/scripts"
+
